@@ -113,9 +113,10 @@ builder.Services.AddCors(options => options.AddPolicy(CorsPolicy, policy =>
                 return true;
             }
 
-            // 2. En la nube: permitir el dominio oficial firmeza.clandev.com y cualquier subdominio .clandev.com
+            // 2. En la nube: permitir el dominio oficial firmeza.clandev.com, subdominios .clandev.com y cualquier subdominio de Render (.onrender.com)
             if (uri.Host.Equals("firmeza.clandev.com", StringComparison.OrdinalIgnoreCase) ||
-                uri.Host.EndsWith(".clandev.com", StringComparison.OrdinalIgnoreCase))
+                uri.Host.EndsWith(".clandev.com", StringComparison.OrdinalIgnoreCase) ||
+                uri.Host.EndsWith(".onrender.com", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
