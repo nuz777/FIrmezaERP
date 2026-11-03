@@ -23,5 +23,16 @@ public interface IAuthService
         CompleteProfileRequest request,
         CancellationToken cancellationToken = default);
 
+    Task<Result<UserResponse>> UpdateProfileAsync(
+        UpdateProfileRequest request,
+        CancellationToken cancellationToken = default);
+
+    Task<Result<RequestPasswordResetCodeResponse>> RequestPasswordResetCodeAsync(
+        CancellationToken cancellationToken = default);
+
+    Task<Result> ChangePasswordWithCodeAsync(
+        ChangePasswordWithCodeRequest request,
+        CancellationToken cancellationToken = default);
+
     Task<Result> DeleteAccountAsync(CancellationToken cancellationToken = default);
 }

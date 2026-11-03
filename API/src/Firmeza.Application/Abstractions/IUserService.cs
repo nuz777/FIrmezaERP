@@ -52,4 +52,8 @@ public interface IUserService
     Task<SignInAttempt> SignInAsync(string email, string password, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<string>> GetRolesAsync(string userId, CancellationToken cancellationToken = default);
+
+    Task<OperationResult<UserAccount>> UpdateProfileAsync(string userId, string fullName, string? avatarUrl, CancellationToken cancellationToken = default);
+
+    Task<OperationResult<bool>> ResetPasswordAsync(string userId, string newPassword, CancellationToken cancellationToken = default);
 }

@@ -22,4 +22,11 @@ public interface IMailService
         string recipientEmail,
         string recipientName,
         CancellationToken cancellationToken = default);
+
+    Task SendPasswordResetCodeEmailAsync(
+        string recipientEmail,
+        string recipientName,
+        string code,
+        int expiresInMinutes = 10,
+        CancellationToken cancellationToken = default);
 }

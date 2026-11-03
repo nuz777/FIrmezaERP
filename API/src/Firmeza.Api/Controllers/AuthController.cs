@@ -98,6 +98,47 @@ public sealed class AuthController : ControllerBase
         return result.IsSuccess ? Ok(result.Value) : BadRequest(result);
     }
 
+    /// <summary>Actualiza los datos personales y la foto de perfil del usuario autenticado.</summary>
+    [HttpPut("profile")]
+    [Authorize]
+    [ProducesResponseType(typeof(UserResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<UserResponse>> UpdateProfile(
+        [FromBody] UpdateProfileRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _auth.UpdateProfileAsync(request, cancellationToken);
+        return result.IsSuccess ? Ok(result.Value) : BadRequest(result);
+    }
+
+    /// <summary>Solicita un código numérico de 6 dígitos al correo electrónico para cambio de contraseña.</summary>
+    [HttpPost("request-password-code")]
+    [Authorize]
+    [ProducesResponseType(typeof(RequestPasswordResetCodeResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<RequestPasswordResetCodeResponse>> RequestPasswordCode(
+        CancellationToken cancellationToken)
+    {
+        var result = await _auth.RequestPasswordResetCodeAsync(cancellationToken);
+        return result.IsSuccess ? Ok(result.Value) : BadRequest(result);
+    }
+
+    /// <summary>Confirma el cambio de contraseña mediante el código de verificación de 6 dígitos recibido al correo.</summary>
+    [HttpPost("change-password")]
+    [Authorize]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult> ChangePassword(
+        [FromBody] ChangePasswordWithCodeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await _auth.ChangePasswordWithCodeAsync(request, cancellationToken);
+        return result.IsSuccess ? Ok(new { message = "Contraseña actualizada exitosamente." }) : BadRequest(result);
+    }
+
     /// <summary>Inicia el flujo OAuth 2.0 con GitHub.</summary>
     [HttpGet("external-login")]
     [AllowAnonymous]

@@ -165,6 +165,47 @@ public sealed class SmtpMailService : IMailService
         }
     }
 
+    public async Task SendPasswordResetCodeEmailAsync(
+        string recipientEmail,
+        string recipientName,
+        string code,
+        int expiresInMinutes = 10,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(recipientEmail)) return;
+
+        if (!_options.Enabled)
+        {
+            _logger.LogInformation("Envío de correos deshabilitado en configuración. Código OTP para: {Email}", recipientEmail);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.Password) && string.Equals(_options.Host, "smtp.gmail.com", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("Se omitió el envío SMTP de código OTP a {Email}: Mail:Password no está configurado aún.", recipientEmail);
+            return;
+        }
+
+        try
+        {
+            using var message = new MailMessage
+            {
+                From = new MailAddress(_options.FromEmail, _options.FromName),
+                Subject = $"{code} es tu código de verificación - Firmeza",
+                IsBodyHtml = true,
+                Body = BuildPasswordResetCodeHtml(recipientName, recipientEmail, code, expiresInMinutes)
+            };
+            message.To.Add(new MailAddress(recipientEmail, recipientName));
+
+            await _transport.SendMailAsync(message, cancellationToken);
+            _logger.LogInformation("Correo con código OTP enviado exitosamente a {Email}.", recipientEmail);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Fallo al enviar código OTP a {Email}.", recipientEmail);
+        }
+    }
+
     private string GetFrontendUrl(string relativePath)
     {
         var baseUrl = string.IsNullOrWhiteSpace(_options.FrontendBaseUrl)
@@ -639,6 +680,98 @@ public sealed class SmtpMailService : IMailService
             <td style=""background-color: #0f172a; padding: 22px 32px; text-align: center; color: #94a3b8; font-size: 11px; line-height: 1.6;"">
               <strong style=""color: #ffffff; font-size: 12px; letter-spacing: 0.5px;"">FIRMEZA S.A.S.</strong> · NIT 901.458.789-1<br />
               Cifrado TLS 1.3 · ERP Firmeza Cloud v2.0
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>";
+    }
+
+    private string BuildPasswordResetCodeHtml(string name, string email, string code, int expiresInMinutes)
+    {
+        var encodedName = System.Web.HttpUtility.HtmlEncode(name);
+        var encodedEmail = System.Web.HttpUtility.HtmlEncode(email);
+
+        return $@"<!DOCTYPE html>
+<html lang=""es"">
+<head>
+  <meta charset=""UTF-8"">
+  <title>Código de Verificación - Firmeza</title>
+</head>
+<body style=""margin: 0; padding: 0; background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #0f172a;"">
+
+  <table role=""presentation"" border=""0"" cellpadding=""0"" cellspacing=""0"" width=""100%"" style=""background-color: #0b0f19; padding: 32px 12px;"">
+    <tr>
+      <td align=""center"">
+        <table role=""presentation"" border=""0"" cellpadding=""0"" cellspacing=""0"" width=""100%"" style=""max-width: 580px; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 25px 60px -15px rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.08);"">
+          
+          <!-- BANNER HERO -->
+          <tr>
+            <td style=""background: linear-gradient(135deg, #090d16 0%, #0f172a 50%, #1d4ed8 100%); padding: 36px 32px 28px; text-align: center; border-bottom: 3px solid #2563eb;"">
+              <span style=""display: inline-block; padding: 4px 14px; background: rgba(59, 130, 246, 0.2); border: 1px solid rgba(96, 165, 250, 0.4); border-radius: 9999px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #93c5fd; margin-bottom: 12px;"">
+                🔒 Seguridad de la Cuenta
+              </span>
+              <h1 style=""margin: 0 0 4px; font-size: 26px; font-weight: 900; letter-spacing: 2px; color: #ffffff; text-transform: uppercase;"">
+                FIRMEZA
+              </h1>
+              <div style=""margin-top: 6px; font-size: 15px; font-weight: 700; color: #60a5fa;"">
+                Código de Verificación
+              </div>
+            </td>
+          </tr>
+
+          <!-- CUERPO -->
+          <tr>
+            <td style=""padding: 32px 32px 24px; background-color: #ffffff;"">
+              <h2 style=""margin: 0 0 12px; font-size: 18px; font-weight: 800; color: #0f172a;"">
+                Hola, {encodedName}
+              </h2>
+              <p style=""margin: 0 0 18px; font-size: 14px; line-height: 1.6; color: #475569;"">
+                Hemos recibido una solicitud para cambiar la contraseña de tu cuenta en Firmeza vinculada a <strong>{encodedEmail}</strong>.
+              </p>
+              <p style=""margin: 0 0 22px; font-size: 14px; line-height: 1.6; color: #475569;"">
+                Ingresa el siguiente código de 6 dígitos en la aplicación para confirmar tu nueva contraseña:
+              </p>
+
+              <!-- CAJA DEL CÓDIGO OTP -->
+              <table role=""presentation"" border=""0"" cellpadding=""0"" cellspacing=""0"" width=""100%"" style=""background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%); border: 2px dashed #3b82f6; border-radius: 16px; margin: 10px 0 24px;"">
+                <tr>
+                  <td align=""center"" style=""padding: 24px 20px;"">
+                    <div style=""font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px; color: #64748b; margin-bottom: 8px;"">
+                      Tu Código OTP
+                    </div>
+                    <div style=""font-family: ui-monospace, Menlo, Monaco, Consolas, 'Courier New', monospace; font-size: 38px; font-weight: 900; letter-spacing: 10px; color: #1d4ed8; text-indent: 10px;"">
+                      {code}
+                    </div>
+                    <div style=""margin-top: 10px; font-size: 12px; font-weight: 600; color: #64748b;"">
+                      ⏱ Válido únicamente durante los próximos {expiresInMinutes} minutos
+                    </div>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- ALERTA DE SEGURIDAD -->
+              <table role=""presentation"" border=""0"" cellpadding=""0"" cellspacing=""0"" width=""100%"" style=""background-color: #fffbeb; border: 1px solid #fef3c7; border-radius: 12px; margin-bottom: 16px;"">
+                <tr>
+                  <td style=""padding: 14px 16px;"">
+                    <div style=""font-size: 12.5px; line-height: 1.5; color: #92400e;"">
+                      <strong>⚠️ Aviso de seguridad:</strong> Si tú no solicitaste este cambio, por favor ignora este correo. Tu contraseña actual sigue estando protegida y nadie podrá acceder sin este código.
+                    </div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- FOOTER -->
+          <tr>
+            <td style=""background-color: #0f172a; padding: 22px 32px; text-align: center; color: #94a3b8; font-size: 11px; line-height: 1.6;"">
+              <strong style=""color: #ffffff; font-size: 12px; letter-spacing: 0.5px;"">FIRMEZA S.A.S.</strong> · Materiales de Construcción<br />
+              Este es un correo automático de seguridad, por favor no responda a este mensaje.
             </td>
           </tr>
 

@@ -32,7 +32,10 @@ public static class InfrastructureServiceCollectionExtensions
             })
             .AddRoles<IdentityRole>()
             .AddSignInManager()
+            .AddDefaultTokenProviders()
             .AddEntityFrameworkStores<ApplicationDbContext>();
+
+        services.AddMemoryCache();
 
         services.AddSingleton(BuildJwtTokenOptions(configuration));
         services.AddSingleton<IClock, SystemClock>();

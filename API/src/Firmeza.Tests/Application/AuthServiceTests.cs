@@ -4,6 +4,7 @@ using Firmeza.Application.Dtos.Auth;
 using Firmeza.Application.Services.Auth;
 using Firmeza.Domain.Identity;
 using Firmeza.Tests.Common;
+using Microsoft.Extensions.Caching.Memory;
 using NSubstitute;
 
 namespace Firmeza.Tests.Application;
@@ -172,5 +173,87 @@ public class AuthServiceTests
 
         Assert.True(result.IsFailure);
         Assert.Equal(ErrorCode.Unauthorized, result.Error!.Code);
+    }
+
+    [Fact]
+    public async Task UpdateProfileAsync_UpdatesUserProfileAndCustomerData()
+    {
+        _users.FindByIdAsync(User.Id, Arg.Any<CancellationToken>()).Returns(User);
+        _users.UpdateProfileAsync(User.Id, "Iván Actualizado", "https://avatar.url/img.png", Arg.Any<CancellationToken>())
+            .Returns(OperationResult<UserAccount>.Success(new UserAccount(User.Id, User.Email, "Iván Actualizado", true, "https://avatar.url/img.png")));
+        _users.GetRolesAsync(User.Id, Arg.Any<CancellationToken>()).Returns([ApplicationRoles.Customer]);
+
+        var result = await _sut.UpdateProfileAsync(new UpdateProfileRequest
+        {
+            FullName = " Iván Actualizado ",
+            Phone = "3001234567",
+            Address = "Calle 100 # 20-30",
+            AvatarUrl = "https://avatar.url/img.png"
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Iván Actualizado", result.Value!.FullName);
+        Assert.Equal("https://avatar.url/img.png", result.Value.AvatarUrl);
+    }
+
+    [Fact]
+    public async Task RequestPasswordResetCodeAsync_GeneratesCodeAndSendsEmail()
+    {
+        var mailMock = Substitute.For<IMailService>();
+        var cache = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        var sut = new AuthService(_users, _tokens, _refreshTokens, _requests, _customers, _currentUser, _clock, _unitOfWork, mailMock, cache);
+
+        _users.FindByIdAsync(User.Id, Arg.Any<CancellationToken>()).Returns(User);
+
+        var result = await sut.RequestPasswordResetCodeAsync();
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(User.Email, result.Value!.Email);
+        await mailMock.Received(1).SendPasswordResetCodeEmailAsync(
+            User.Email,
+            User.FullName,
+            Arg.Is<string>(c => c.Length == 6),
+            10,
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ChangePasswordWithCodeAsync_WhenCodeIsValid_ResetsPassword()
+    {
+        var cache = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        cache.Set($"pwd-otp:{User.Id}", "123456", TimeSpan.FromMinutes(10));
+
+        var sut = new AuthService(_users, _tokens, _refreshTokens, _requests, _customers, _currentUser, _clock, _unitOfWork, null, cache);
+        _users.ResetPasswordAsync(User.Id, "NuevaClave123!", Arg.Any<CancellationToken>())
+            .Returns(OperationResult<bool>.Success(true));
+
+        var result = await sut.ChangePasswordWithCodeAsync(new ChangePasswordWithCodeRequest
+        {
+            Code = "123456",
+            NewPassword = "NuevaClave123!",
+            ConfirmPassword = "NuevaClave123!"
+        });
+
+        Assert.True(result.IsSuccess);
+        Assert.False(cache.TryGetValue($"pwd-otp:{User.Id}", out _));
+    }
+
+    [Fact]
+    public async Task ChangePasswordWithCodeAsync_WhenCodeIsInvalid_ReturnsValidationError()
+    {
+        var cache = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        cache.Set($"pwd-otp:{User.Id}", "123456", TimeSpan.FromMinutes(10));
+
+        var sut = new AuthService(_users, _tokens, _refreshTokens, _requests, _customers, _currentUser, _clock, _unitOfWork, null, cache);
+
+        var result = await sut.ChangePasswordWithCodeAsync(new ChangePasswordWithCodeRequest
+        {
+            Code = "999999",
+            NewPassword = "NuevaClave123!",
+            ConfirmPassword = "NuevaClave123!"
+        });
+
+        Assert.True(result.IsFailure);
+        Assert.Equal(ErrorCode.Validation, result.Error!.Code);
     }
 }

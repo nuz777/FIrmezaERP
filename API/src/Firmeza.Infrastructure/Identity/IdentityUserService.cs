@@ -178,22 +178,64 @@ public sealed class IdentityUserService : IUserService
         return [.. roles];
     }
 
+    public async Task<OperationResult<UserAccount>> UpdateProfileAsync(string userId, string fullName, string? avatarUrl, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            return OperationResult<UserAccount>.Failure(["Usuario no encontrado."]);
+        }
+
+        user.FullName = fullName.Trim();
+        var updateResult = await _userManager.UpdateAsync(user);
+        if (!updateResult.Succeeded)
+        {
+            return OperationResult<UserAccount>.Failure(updateResult.Errors.Select(e => e.Description).ToList());
+        }
+
+        await SyncAvatarClaimAsync(user, avatarUrl);
+        return OperationResult<UserAccount>.Success(await ToAccountAsync(user));
+    }
+
+    public async Task<OperationResult<bool>> ResetPasswordAsync(string userId, string newPassword, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId);
+        if (user is null)
+        {
+            return OperationResult<bool>.Failure(["Usuario no encontrado."]);
+        }
+
+        var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var resetResult = await _userManager.ResetPasswordAsync(user, token, newPassword);
+        if (!resetResult.Succeeded)
+        {
+            return OperationResult<bool>.Failure(resetResult.Errors.Select(e => e.Description).ToList());
+        }
+
+        return OperationResult<bool>.Success(true);
+    }
+
     private async Task SyncAvatarClaimAsync(ApplicationUser user, string? avatarUrl)
     {
+        var claims = await _userManager.GetClaimsAsync(user);
+        var existingAvatar = claims.FirstOrDefault(c => c.Type == "picture" || c.Type == "avatar_url");
+
         if (string.IsNullOrWhiteSpace(avatarUrl))
         {
+            if (existingAvatar is not null)
+            {
+                await _userManager.RemoveClaimAsync(user, existingAvatar);
+            }
             return;
         }
 
-        var claims = await _userManager.GetClaimsAsync(user);
-        var existingAvatar = claims.FirstOrDefault(c => c.Type == "picture" || c.Type == "avatar_url");
         if (existingAvatar is null)
         {
-            await _userManager.AddClaimAsync(user, new Claim("picture", avatarUrl));
+            await _userManager.AddClaimAsync(user, new Claim("picture", avatarUrl.Trim()));
         }
-        else if (existingAvatar.Value != avatarUrl)
+        else if (existingAvatar.Value != avatarUrl.Trim())
         {
-            await _userManager.ReplaceClaimAsync(user, existingAvatar, new Claim("picture", avatarUrl));
+            await _userManager.ReplaceClaimAsync(user, existingAvatar, new Claim("picture", avatarUrl.Trim()));
         }
     }
 

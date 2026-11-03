@@ -4,6 +4,7 @@ using Firmeza.Application.Dtos.Auth;
 using Firmeza.Domain.Entities;
 using Firmeza.Domain.Enums;
 using Firmeza.Domain.Identity;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace Firmeza.Application.Services.Auth;
 
@@ -18,6 +19,7 @@ public sealed class AuthService : IAuthService
     private readonly IClock _clock;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMailService? _mailService;
+    private readonly IMemoryCache? _cache;
 
     public AuthService(
         IUserService users,
@@ -28,7 +30,8 @@ public sealed class AuthService : IAuthService
         ICurrentUserService currentUser,
         IClock clock,
         IUnitOfWork unitOfWork,
-        IMailService? mailService = null)
+        IMailService? mailService = null,
+        IMemoryCache? cache = null)
     {
         _users = users;
         _tokens = tokens;
@@ -39,6 +42,7 @@ public sealed class AuthService : IAuthService
         _clock = clock;
         _unitOfWork = unitOfWork;
         _mailService = mailService;
+        _cache = cache;
     }
 
     public async Task<Result<TokenResponse>> LoginAsync(LoginRequest request, CancellationToken cancellationToken = default)
@@ -210,7 +214,198 @@ public sealed class AuthService : IAuthService
         var roles = await _users.GetRolesAsync(user.Id, cancellationToken);
         var customerStatus = await ResolveCustomerStatusAsync(user.Email, roles, cancellationToken);
 
-        return Result.Success(new UserResponse(user.Id, user.Email, user.FullName, roles, customerStatus, user.AvatarUrl));
+        string? phone = null;
+        string? address = null;
+
+        var customer = await _customers.FindByEmailAsync(user.Email, cancellationToken);
+        if (customer is not null)
+        {
+            phone = customer.Phone;
+            address = customer.Address;
+        }
+        else
+        {
+            var request = await _requests.FindLatestByEmailAsync(user.Email, cancellationToken);
+            if (request is not null)
+            {
+                phone = request.Phone;
+                address = request.Address;
+            }
+        }
+
+        return Result.Success(new UserResponse(user.Id, user.Email, user.FullName, roles, customerStatus, user.AvatarUrl, phone, address));
+    }
+
+    public async Task<Result<UserResponse>> UpdateProfileAsync(
+        UpdateProfileRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Result.Failure<UserResponse>(Error.Unauthorized("No hay una sesión activa."));
+        }
+
+        var user = await _users.FindByIdAsync(userId, cancellationToken);
+        if (user is null)
+        {
+            return Result.Failure<UserResponse>(Error.EntityNotFound("Usuario", userId));
+        }
+
+        var trimmedName = request.FullName?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmedName))
+        {
+            return Result.Failure<UserResponse>(Error.Validation(new Dictionary<string, string[]>
+            {
+                [nameof(request.FullName)] = ["El nombre es obligatorio."]
+            }, "El nombre completo es obligatorio."));
+        }
+
+        var updateResult = await _users.UpdateProfileAsync(userId, trimmedName, request.AvatarUrl, cancellationToken);
+        if (!updateResult.Succeeded || updateResult.Value is null)
+        {
+            return Result.Failure<UserResponse>(Error.Validation(
+                MapIdentityErrors(updateResult.Errors),
+                "No fue posible actualizar el perfil."));
+        }
+
+        var customer = await _customers.FindByEmailAsync(user.Email, cancellationToken);
+        if (customer is not null)
+        {
+            customer.FullName = trimmedName;
+            if (!string.IsNullOrWhiteSpace(request.Phone))
+            {
+                customer.Phone = request.Phone.Trim();
+            }
+            if (request.Address is not null)
+            {
+                customer.Address = string.IsNullOrWhiteSpace(request.Address) ? null : request.Address.Trim();
+            }
+            customer.UpdatedAt = _clock.UtcNow;
+        }
+
+        var signupRequest = await _requests.FindLatestByEmailAsync(user.Email, cancellationToken);
+        if (signupRequest is not null)
+        {
+            signupRequest.FullName = trimmedName;
+            if (!string.IsNullOrWhiteSpace(request.Phone))
+            {
+                signupRequest.Phone = request.Phone.Trim();
+            }
+            if (request.Address is not null)
+            {
+                signupRequest.Address = string.IsNullOrWhiteSpace(request.Address) ? null : request.Address.Trim();
+            }
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var roles = await _users.GetRolesAsync(user.Id, cancellationToken);
+        var customerStatus = await ResolveCustomerStatusAsync(user.Email, roles, cancellationToken);
+
+        return Result.Success(new UserResponse(
+            user.Id,
+            user.Email,
+            trimmedName,
+            roles,
+            customerStatus,
+            updateResult.Value.AvatarUrl,
+            customer?.Phone ?? signupRequest?.Phone ?? request.Phone,
+            customer?.Address ?? signupRequest?.Address ?? request.Address));
+    }
+
+    public async Task<Result<RequestPasswordResetCodeResponse>> RequestPasswordResetCodeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Result.Failure<RequestPasswordResetCodeResponse>(Error.Unauthorized("No hay una sesión activa."));
+        }
+
+        var user = await _users.FindByIdAsync(userId, cancellationToken);
+        if (user is null)
+        {
+            return Result.Failure<RequestPasswordResetCodeResponse>(Error.EntityNotFound("Usuario", userId));
+        }
+
+        if (_cache is not null && _cache.TryGetValue($"pwd-otp-cooldown:{userId}", out _))
+        {
+            return Result.Failure<RequestPasswordResetCodeResponse>(Error.Validation(new Dictionary<string, string[]>
+            {
+                ["Code"] = ["Debes esperar 60 segundos antes de solicitar un nuevo código."]
+            }, "Debes esperar 60 segundos antes de solicitar un nuevo código de verificación."));
+        }
+
+        var code = System.Security.Cryptography.RandomNumberGenerator.GetInt32(100000, 1000000).ToString("D6");
+
+        if (_cache is not null)
+        {
+            _cache.Set($"pwd-otp:{userId}", code, TimeSpan.FromMinutes(10));
+            _cache.Set($"pwd-otp-cooldown:{userId}", true, TimeSpan.FromSeconds(60));
+        }
+
+        if (_mailService is not null)
+        {
+            try
+            {
+                await _mailService.SendPasswordResetCodeEmailAsync(user.Email, user.FullName, code, 10, cancellationToken);
+            }
+            catch
+            {
+                // Fallo de correo no interrumpe el flujo
+            }
+        }
+
+        return Result.Success(new RequestPasswordResetCodeResponse(
+            user.Email,
+            "Hemos enviado un código de 6 dígitos a tu correo electrónico.",
+            10));
+    }
+
+    public async Task<Result> ChangePasswordWithCodeAsync(
+        ChangePasswordWithCodeRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = _currentUser.UserId;
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Result.Failure(Error.Unauthorized("No hay una sesión activa."));
+        }
+
+        if (!string.Equals(request.NewPassword, request.ConfirmPassword, StringComparison.Ordinal))
+        {
+            return Result.Failure(Error.Validation(new Dictionary<string, string[]>
+            {
+                [nameof(request.ConfirmPassword)] = ["Las contraseñas no coinciden."]
+            }, "Las contraseñas ingresadas no coinciden."));
+        }
+
+        var inputCode = request.Code?.Trim() ?? string.Empty;
+
+        if (_cache is not null)
+        {
+            if (!_cache.TryGetValue($"pwd-otp:{userId}", out string? cachedCode) || !string.Equals(cachedCode, inputCode, StringComparison.Ordinal))
+            {
+                return Result.Failure(Error.Validation(new Dictionary<string, string[]>
+                {
+                    [nameof(request.Code)] = ["El código de verificación es incorrecto o ha expirado."]
+                }, "El código de verificación ingresado no es válido o ya expiró (duración máxima 10 minutos)."));
+            }
+        }
+
+        var resetResult = await _users.ResetPasswordAsync(userId, request.NewPassword, cancellationToken);
+        if (!resetResult.Succeeded)
+        {
+            return Result.Failure(Error.Validation(
+                MapIdentityErrors(resetResult.Errors),
+                "No fue posible actualizar la contraseña. Revisa que cumpla los requisitos de seguridad."));
+        }
+
+        _cache?.Remove($"pwd-otp:{userId}");
+        _cache?.Remove($"pwd-otp-cooldown:{userId}");
+
+        return Result.Success();
     }
 
     public async Task<Result<TokenResponse>> ExternalLoginAsync(
