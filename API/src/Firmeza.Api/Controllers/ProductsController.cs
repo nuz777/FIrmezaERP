@@ -29,14 +29,16 @@ public sealed class ProductsController : ControllerBase
         _products = products;
     }
 
-    /// <summary>Lista paginada de productos con busqueda opcional.</summary>
+    /// <summary>Lista paginada de productos con busqueda opcional. Endpoint publico para el catalogo.</summary>
     [HttpGet]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(PagedResponse<ProductResponse>), StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResponse<ProductResponse>>> List([FromQuery] ProductQuery query, CancellationToken cancellationToken)
         => Ok(await _products.ListAsync(query, cancellationToken));
 
-    /// <summary>Obtiene un producto por su identificador.</summary>
+    /// <summary>Obtiene un producto por su identificador. Endpoint publico.</summary>
     [HttpGet("{id:guid}")]
+    [AllowAnonymous]
     [ProducesResponseType(typeof(ProductResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ProductResponse>> GetById(Guid id, CancellationToken cancellationToken)
