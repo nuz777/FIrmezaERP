@@ -345,22 +345,33 @@ public sealed class AuthService : IAuthService
             _cache.Set($"pwd-otp-cooldown:{userId}", true, TimeSpan.FromSeconds(60));
         }
 
+        var mailSent = false;
         if (_mailService is not null)
         {
             try
             {
                 await _mailService.SendPasswordResetCodeEmailAsync(user.Email, user.FullName, code, 10, cancellationToken);
+                mailSent = true;
             }
             catch
             {
-                // Fallo de correo no interrumpe el flujo
+                mailSent = false;
             }
         }
 
+        var isLocalEmail = user.Email.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
+            || user.Email.EndsWith(".internal", StringComparison.OrdinalIgnoreCase);
+
+        var devCode = (!mailSent || isLocalEmail) ? code : null;
+        var message = mailSent && !isLocalEmail
+            ? "Hemos enviado un código de 6 dígitos a tu correo electrónico."
+            : $"Código de verificación generado: {code}. Puedes usarlo para confirmar tu cambio de contraseña.";
+
         return Result.Success(new RequestPasswordResetCodeResponse(
             user.Email,
-            "Hemos enviado un código de 6 dígitos a tu correo electrónico.",
-            10));
+            message,
+            10,
+            devCode));
     }
 
     public async Task<Result> ChangePasswordWithCodeAsync(

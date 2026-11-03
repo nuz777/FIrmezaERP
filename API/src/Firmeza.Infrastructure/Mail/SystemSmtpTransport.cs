@@ -23,7 +23,7 @@ public sealed class SystemSmtpTransport : ISmtpTransport
             EnableSsl = _options.EnableSsl,
             DeliveryMethod = SmtpDeliveryMethod.Network,
             UseDefaultCredentials = false,
-            Timeout = 15000 // 15s timeout
+            Timeout = 8000
         };
 
         if (!string.IsNullOrWhiteSpace(_options.UserName) && !string.IsNullOrWhiteSpace(_options.Password))
@@ -32,6 +32,9 @@ public sealed class SystemSmtpTransport : ISmtpTransport
             client.Credentials = new NetworkCredential(_options.UserName, cleanedPassword);
         }
 
-        await client.SendMailAsync(message, cancellationToken);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromSeconds(8));
+
+        await client.SendMailAsync(message, cts.Token);
     }
 }

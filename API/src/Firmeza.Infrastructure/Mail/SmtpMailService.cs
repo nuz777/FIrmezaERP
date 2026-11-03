@@ -172,18 +172,28 @@ public sealed class SmtpMailService : IMailService
         int expiresInMinutes = 10,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(recipientEmail)) return;
+        if (string.IsNullOrWhiteSpace(recipientEmail))
+        {
+            throw new ArgumentException("El correo del destinatario está vacío.", nameof(recipientEmail));
+        }
 
         if (!_options.Enabled)
         {
             _logger.LogInformation("Envío de correos deshabilitado en configuración. Código OTP para: {Email}", recipientEmail);
-            return;
+            throw new InvalidOperationException("El servicio de correo está deshabilitado en la configuración.");
         }
 
         if (string.IsNullOrWhiteSpace(_options.Password) && string.Equals(_options.Host, "smtp.gmail.com", StringComparison.OrdinalIgnoreCase))
         {
             _logger.LogWarning("Se omitió el envío SMTP de código OTP a {Email}: Mail:Password no está configurado aún.", recipientEmail);
-            return;
+            throw new InvalidOperationException("Mail:Password no está configurado.");
+        }
+
+        if (recipientEmail.EndsWith(".local", StringComparison.OrdinalIgnoreCase) ||
+            recipientEmail.EndsWith(".internal", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("Omitiendo envío de correo real a dominio interno/local: {Email}", recipientEmail);
+            throw new InvalidOperationException($"No se pueden enviar correos reales a dominios locales ({recipientEmail}).");
         }
 
         try
@@ -203,6 +213,7 @@ public sealed class SmtpMailService : IMailService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Fallo al enviar código OTP a {Email}.", recipientEmail);
+            throw;
         }
     }
 

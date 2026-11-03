@@ -100,14 +100,15 @@ public sealed class UpdateProfileRequest
     public string? Address { get; set; }
 
     [Display(Name = "Foto de perfil")]
-    [StringLength(500)]
+    [MaxLength(2_097_152, ErrorMessage = "La imagen de perfil no debe superar 2 MB.")]
     public string? AvatarUrl { get; set; }
 }
 
 public sealed record RequestPasswordResetCodeResponse(
     string Email,
     string Message,
-    int ExpiresInMinutes);
+    int ExpiresInMinutes,
+    string? DevCode = null);
 
 public sealed class ChangePasswordWithCodeRequest
 {
